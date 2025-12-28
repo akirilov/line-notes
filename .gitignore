@@ -1,0 +1,2 @@
+# Omit secrets and environment files
+.env

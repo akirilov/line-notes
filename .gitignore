@@ -1,2 +1,4 @@
 # Omit secrets and environment files
 .env
+credentials.json
+token.json

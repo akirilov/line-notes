@@ -76,54 +76,49 @@ func saveToken(path string, token *oauth2.Token) {
 	json.NewEncoder(f).Encode(token)
 }
 
-func main() {
-	// Load the environment variables from a .env file if it exists
-	godotenv.Load()
+// Add a bullet point to the top of the Google Doc
+func writeToGoogleDoc(text string) error {
+	// Add a newline if the text does not end with one
+	if len(text) == 0 || text[len(text)-1] != '\n' {
+		text += "\n"
+	}
 
-	// Create a Gin router with default middleware (logger and recovery)
-	r := gin.Default()
+	docId := os.Getenv("GOOGLE_DOC_ID")
+	if docId != "" && docsService != nil {
+		// Insert text at index 1 (right after the title)
+		requests := []*docs.Request{
+			// Insert the text at index 1
+			{
+				InsertText: &docs.InsertTextRequest{
+					Location: &docs.Location{Index: 1},
+					Text:     text,
+				},
+			},
+			// Create a bullet for the paragraph we just inserted
+			{
+				CreateParagraphBullets: &docs.CreateParagraphBulletsRequest{
+					Range: &docs.Range{
+						StartIndex: 1,
+						EndIndex:   int64(len(text) + 1),
+					},
+					BulletPreset: "BULLET_DISC_CIRCLE_SQUARE",
+				},
+			},
+		}
 
-	// OAuth callback endpoint
-	r.GET("/oauth/callback", handleOAuthCallback)
+		batchUpdateRequest := &docs.BatchUpdateDocumentRequest{
+			Requests: requests,
+		}
 
-	// Define a webhook for a LINE message API bot
-	r.POST("/line/webhook", handleLineWebhook)
-
-	// Initialize Google Docs client in background
-	go func() {
-		ctx := context.Background()
-		b, err := os.ReadFile("credentials.json")
+		_, err := docsService.Documents.BatchUpdate(docId, batchUpdateRequest).Do()
 		if err != nil {
-			log.Fatalf("Unable to read client secret file: %v", err)
+			return fmt.Errorf("Unable to update document: %v", err)
+		} else {
+			return nil
 		}
-
-		// If modifying these scopes, delete your previously saved token.json.
-		config, err := google.ConfigFromJSON(b, "https://www.googleapis.com/auth/documents.readonly")
-		if err != nil {
-			log.Fatalf("Unable to parse client secret file to config: %v", err)
-		}
-
-		// Set the redirect URL (change this to your reverse proxy URL)
-		config.RedirectURL = os.Getenv("OAUTH_REDIRECT_URL")
-		if config.RedirectURL == "" {
-			log.Fatalf("OAUTH_REDIRECT_URL environment variable is not set")
-		}
-
-		client := getClient(config)
-
-		srv, err := docs.NewService(ctx, option.WithHTTPClient(client))
-		if err != nil {
-			log.Fatalf("Unable to retrieve Docs client: %v", err)
-		}
-
-		// Set the global service
-		docsService = srv
-		log.Println("Google Docs client initialized successfully")
-	}()
-
-	// Start server on port 8080 (default)
-	// Server will listen on 0.0.0.0:8080 (localhost:8080 on Windows)
-	r.Run()
+	} else {
+		return fmt.Errorf("Google Docs service not initialized or GOOGLE_DOC_ID not set")
+	}
 }
 
 func handleOAuthCallback(c *gin.Context) {
@@ -138,7 +133,7 @@ func handleOAuthCallback(c *gin.Context) {
 	authCodeChan <- code
 
 	// Respond to the user
-	c.HTML(http.StatusOK, "", "Authorization successful! You can close this window and return to the application.")
+	log.Println("Authorization successful! You can close this window and return to the application.")
 }
 
 func handleLineWebhook(c *gin.Context) {
@@ -178,18 +173,96 @@ func handleLineWebhook(c *gin.Context) {
 	jsonBytes, _ := json.MarshalIndent(bodyMap, "", "  ")
 	fmt.Println(string(jsonBytes))
 
-	// 3. Process the webhook events as needed
-	// Example: Print the title of a doc
-	docId := os.Getenv("GOOGLE_DOC_ID")
-	if docId != "" {
-		doc, err := docsService.Documents.Get(docId).Do()
+	// 3. Get teh message text
+	events, ok := bodyMap["events"].([]interface{})
+	if !ok || len(events) == 0 {
+		log.Printf("No events found in the request")
+		c.Status(http.StatusOK)
+		return
+	}
+	for _, event := range events {
+		eventMap, ok := event.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if eventMap["type"] != "message" {
+			continue
+		}
+		message, ok := eventMap["message"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if message["type"] != "text" {
+			continue
+		}
+		text, ok := message["text"].(string)
+		if !ok {
+			continue
+		}
+		err = writeToGoogleDoc(text)
 		if err != nil {
-			log.Printf("Unable to retrieve data from document: %v", err)
-		} else {
-			fmt.Printf("The title of the doc is: %s\n", doc.Title)
+			log.Printf("Failed to write to Google Doc: %v", err)
 		}
 	}
 
 	// 4. Respond with 200 OK
 	c.Status(http.StatusOK)
+}
+
+func main() {
+	// Load the environment variables from a .env file if it exists
+	godotenv.Load()
+
+	// Set Gin to release mode unless otherwise specified
+	ginMode := os.Getenv("GIN_MODE")
+	if ginMode == "" {
+		gin.SetMode(gin.ReleaseMode)
+	} else {
+		gin.SetMode(ginMode)
+	}
+
+	// Create a Gin router with default middleware (logger and recovery)
+	r := gin.Default()
+
+	// OAuth callback endpoint
+	r.GET("/oauth/callback", handleOAuthCallback)
+
+	// Define a webhook for a LINE message API bot
+	r.POST("/line/webhook", handleLineWebhook)
+
+	// Initialize Google Docs client in background
+	go func() {
+		ctx := context.Background()
+		b, err := os.ReadFile("credentials.json")
+		if err != nil {
+			log.Fatalf("Unable to read client secret file: %v", err)
+		}
+
+		// If modifying these scopes, delete your previously saved token.json.
+		config, err := google.ConfigFromJSON(b, "https://www.googleapis.com/auth/documents")
+		if err != nil {
+			log.Fatalf("Unable to parse client secret file to config: %v", err)
+		}
+
+		// Set the redirect URL (change this to your reverse proxy URL)
+		config.RedirectURL = os.Getenv("OAUTH_REDIRECT_URL")
+		if config.RedirectURL == "" {
+			log.Fatalf("OAUTH_REDIRECT_URL environment variable is not set")
+		}
+
+		client := getClient(config)
+
+		srv, err := docs.NewService(ctx, option.WithHTTPClient(client))
+		if err != nil {
+			log.Fatalf("Unable to retrieve Docs client: %v", err)
+		}
+
+		// Set the global service
+		docsService = srv
+		log.Println("Google Docs client initialized successfully")
+	}()
+
+	// Start server on port 8080 (default)
+	// Server will listen on 0.0.0.0:8080 (localhost:8080 on Windows)
+	r.Run()
 }

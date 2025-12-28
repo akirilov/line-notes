@@ -1,0 +1,14 @@
+services:
+  line-notes:
+    build: .
+    container_name: line-notes
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      # Mount credentials.json (read-only)
+      - ./credentials.json:/app/credentials.json:ro
+      # Mount token.json to persist OAuth tokens across restarts
+      - ./token.json:/app/token.json
+    restart: unless-stopped

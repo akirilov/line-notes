@@ -2,3 +2,6 @@
 .env
 credentials.json
 token.json
+
+# Ignore binary files
+line-notes

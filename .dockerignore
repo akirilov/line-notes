@@ -1,0 +1,29 @@
+# Ignore git files
+.git
+.gitignore
+
+# Ignore IDE files
+.vscode
+.devcontainer
+
+# Ignore environment and credentials (will be mounted as volumes)
+.env
+.env.example
+credentials.json
+token.json
+
+# Ignore logs
+*.log
+
+# Ignore build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Ignore test files
+*_test.go
+
+# Ignore documentation
+*.md
+README.md

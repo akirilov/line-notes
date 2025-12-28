@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -99,7 +100,7 @@ func writeToGoogleDoc(text string) error {
 				CreateParagraphBullets: &docs.CreateParagraphBulletsRequest{
 					Range: &docs.Range{
 						StartIndex: 1,
-						EndIndex:   int64(len(text) + 1),
+						EndIndex:   int64(utf8.RuneCountInString(text) + 1),
 					},
 					BulletPreset: "BULLET_DISC_CIRCLE_SQUARE",
 				},
@@ -140,6 +141,7 @@ func handleLineWebhook(c *gin.Context) {
 	// 1. Verify the request signature
 	// Get the "x-line-signature" header from the request and decode it from base64
 	req := c.Request
+	status := http.StatusOK
 	body, err := c.GetRawData()
 	if err != nil {
 		log.Fatalf("Failed to read request body")
@@ -170,10 +172,12 @@ func handleLineWebhook(c *gin.Context) {
 	}
 
 	// 2.5. (DEBUG) Print the received JSON body to the console
-	jsonBytes, _ := json.MarshalIndent(bodyMap, "", "  ")
-	fmt.Println(string(jsonBytes))
+	if gin.Mode() != gin.ReleaseMode {
+		jsonBytes, _ := json.MarshalIndent(bodyMap, "", "  ")
+		fmt.Println(string(jsonBytes))
+	}
 
-	// 3. Get teh message text
+	// 3. Get the message text
 	events, ok := bodyMap["events"].([]interface{})
 	if !ok || len(events) == 0 {
 		log.Printf("No events found in the request")
@@ -202,11 +206,12 @@ func handleLineWebhook(c *gin.Context) {
 		err = writeToGoogleDoc(text)
 		if err != nil {
 			log.Printf("Failed to write to Google Doc: %v", err)
+			status = http.StatusInternalServerError
 		}
 	}
 
 	// 4. Respond with 200 OK
-	c.Status(http.StatusOK)
+	c.Status(status)
 }
 
 func main() {

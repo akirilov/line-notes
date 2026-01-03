@@ -28,6 +28,22 @@ func getClient(config *oauth2.Config) *http.Client {
 		tok = getTokenFromWeb(config)
 		saveToken(tokFile, tok)
 	}
+
+	// Create a token source that automatically refreshes the token
+	tokenSource := config.TokenSource(context.Background(), tok)
+
+	// Get a fresh token (this will refresh if needed)
+	freshToken, err := tokenSource.Token()
+	if err != nil {
+		log.Fatalf("Unable to refresh token: %v", err)
+	}
+
+	// If the token was refreshed, save it
+	if freshToken.AccessToken != tok.AccessToken {
+		saveToken(tokFile, freshToken)
+		tok = freshToken
+	}
+
 	return config.Client(context.Background(), tok)
 }
 
@@ -40,14 +56,14 @@ var docsService *docs.Service
 
 // Requests a token from the web, then returns the retrieved token.
 func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
-	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
+	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline, oauth2.ApprovalForce)
 	fmt.Printf("Go to the following link in your browser to authorize:\n%v\n", authURL)
 	fmt.Println("Waiting for authorization callback...")
 
 	// Wait for the authorization code from the callback endpoint
 	authCode := <-authCodeChan
 
-	tok, err := config.Exchange(oauth2.NoContext, authCode)
+	tok, err := config.Exchange(context.Background(), authCode)
 	if err != nil {
 		log.Fatalf("Unable to retrieve token from web: %v", err)
 	}
